@@ -1,0 +1,41 @@
+Models & Pricing
+
+The prices listed below are in unites of per 1M tokens. A token, the smallest unit of text that the model recognizes, can be a word, a number, or even a punctuation mark. We will bill based on the total number of input and output tokens by the model.
+
+Model Details
+
+MODEL	deepseek-chat	deepseek-reasoner
+MODEL VERSION	DeepSeek-V3.1 (Non-thinking Mode)	DeepSeek-V3.1 (Thinking Mode)
+CONTEXT LENGTH	128K
+MAX OUTPUT	DEFAULT: 4K
+MAXIMUM: 8K	DEFAULT: 32K
+MAXIMUM: 64K
+FEATURES	Json Output	✓	✓
+Function Calling	✓	✗(1)
+Chat Prefix Completion（Beta）	✓	✓
+FIM Completion（Beta）	✓	✗
+(1) If the request to the deepseek-reasoner model includes the tools parameter, the request will actually be processed using the deepseek-chat model.
+Pricing Details
+
+Starting from 16:00 UTC Time on Sept 5th, 2025, we will apply the following price list and cancel the nighttime discount:
+
+MODEL	deepseek-chat	deepseek-reasoner
+1M INPUT TOKENS (CACHE HIT)	$0.07
+1M INPUT TOKENS (CACHE MISS)	$0.56
+1M OUTPUT TOKENS	$1.68
+The current price list will remain in effect until 16:00 UTC Time on Sept 5th, 2025:
+
+MODEL	deepseek-chat	deepseek-reasoner
+STANDARD PRICE
+（UTC 00:30-16:30）	1M INPUT TOKENS (CACHE HIT)	$0.07	$0.14
+1M INPUT TOKENS (CACHE MISS)	$0.27	$0.55
+1M OUTPUT TOKENS	$1.10	$2.19
+DISCOUNT PRICE
+（UTC 16:30-00:30）	1M INPUT TOKENS (CACHE HIT)	$0.035	$0.035
+1M INPUT TOKENS (CACHE MISS)	$0.135	$0.135
+1M OUTPUT TOKENS	$0.550	$0.550
+Deduction Rules
+
+The expense = number of tokens × price. The corresponding fees will be directly deducted from your topped-up balance or granted balance, with a preference for using the granted balance first when both balances are available.
+
+Product prices may vary and DeepSeek reserves the right to adjust them. We recommend topping up based on your actual usage and regularly checking this page for the most recent pricing information.

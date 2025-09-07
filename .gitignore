@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Environment
+.env
+.env.*
+
+# OS
+.DS_Store
+
+# Jupyter
+*.ipynb_checkpoints
+
+# Images/temp
+*.jpg
+*.jpeg
+*.png
+*.webp
+*.heic
+*.heif
+*.tmp
+*.log
+
+# VSCode/Cursor
+.vscode/
+.cursor/
