@@ -36,10 +36,7 @@ You're using an environment where environment variables are not supported (e.g w
 Below are examples for how you can provide an API key explicitly:
 
 Python
-JavaScript
-Go
-Java
-REST
+
 
 from google import genai
 

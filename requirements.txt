@@ -2,3 +2,4 @@ google-genai>=1.0.0
 python-telegram-bot>=21.0
 python-dotenv>=1.0.0
 pillow>=11.0.0
+jsonschema>=4.0.0

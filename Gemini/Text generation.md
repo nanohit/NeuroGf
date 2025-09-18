@@ -4,10 +4,7 @@ The Gemini API can generate text output from various inputs, including text, ima
 Here's a basic example that takes a single text input:
 
 Python
-JavaScript
-Go
-REST
-Apps Script
+
 
 from google import genai
 
@@ -27,10 +24,7 @@ When using 2.5 Flash, you can disable thinking by setting the thinking budget to
 For more details, see the thinking guide.
 
 Python
-JavaScript
-Go
-REST
-Apps Script
+
 
 from google import genai
 from google.genai import types
@@ -50,10 +44,7 @@ System instructions and other configurations
 You can guide the behavior of Gemini models with system instructions. To do so, pass a GenerateContentConfig object.
 
 Python
-JavaScript
-Go
-REST
-Apps Script
+
 
 from google import genai
 from google.genai import types
@@ -71,10 +62,7 @@ print(response.text)
 The GenerateContentConfig object also lets you override default generation parameters, such as temperature.
 
 Python
-JavaScript
-Go
-REST
-Apps Script
+
 
 from google import genai
 from google.genai import types
@@ -96,10 +84,7 @@ Multimodal inputs
 The Gemini API supports multimodal inputs, allowing you to combine text with media files. The following example demonstrates providing an image:
 
 Python
-JavaScript
-Go
-REST
-Apps Script
+
 
 from PIL import Image
 from google import genai
@@ -121,10 +106,7 @@ By default, the model returns a response only after the entire generation proces
 For more fluid interactions, use streaming to receive GenerateContentResponse instances incrementally as they're generated.
 
 Python
-JavaScript
-Go
-REST
-Apps Script
+
 
 from google import genai
 
@@ -141,11 +123,10 @@ Multi-turn conversations (Chat)
 Our SDKs provide functionality to collect multiple rounds of prompts and responses into a chat, giving you an easy way to keep track of the conversation history.
 
 Note: Chat functionality is only implemented as part of the SDKs. Behind the scenes, it still uses the generateContent API. For multi-turn conversations, the full conversation history is sent to the model with each follow-up turn.
+
+
 Python
-JavaScript
-Go
-REST
-Apps Script
+
 
 from google import genai
 
@@ -164,10 +145,7 @@ for message in chat.get_history():
 Streaming can also be used for multi-turn conversations.
 
 Python
-JavaScript
-Go
-REST
-Apps Script
+
 
 from google import genai
 
