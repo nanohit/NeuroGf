@@ -12,6 +12,9 @@ import json
 from jsonschema import validate, ValidationError
 import logging
 import re
+import ffmpeg
+import io
+from google.genai.types import File as GeminiFile, Part
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
@@ -367,6 +370,61 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(reply)
     os.remove(tf.name)
 
+async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    try:
+        await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+    except telegram.error.TimedOut:
+        pass  # Ignore typing timeout
+    if user_id not in user_chats:
+        user_chats[user_id] = client.chats.create(
+            model="gemini-2.5-flash-lite",
+            config=types.GenerateContentConfig(
+                system_instruction=get_system_prompt(user_id),
+                temperature=1.5,
+                max_output_tokens=360
+            )
+        )
+    chat = user_chats[user_id]
+    # Download the .ogg file
+    voice = update.message.voice
+    # Check duration before processing
+    if voice.duration > 120:
+        await update.message.reply_text("я не могу сейчас такое длинное сообщение послушать, прости. давай короче")
+        return
+    file = await context.bot.get_file(voice.file_id)
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.ogg') as ogg_file:
+        await file.download_to_drive(ogg_file.name)
+        # Remux to .webm in-memory
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.webm') as webm_file:
+            (
+                ffmpeg
+                .input(ogg_file.name)
+                .output(webm_file.name, c='copy', f='webm')
+                .run(overwrite_output=True, quiet=True)
+            )
+            # Upload the audio file to Gemini and use the returned File object
+            with open(webm_file.name, 'rb') as f:
+                audio_bytes = f.read()
+            # Upload the audio file to Gemini and use the returned File object
+            audio_io = io.BytesIO(audio_bytes)
+            audio_io.name = "audio.webm"
+            audio_file = client.files.upload(
+                file=audio_io,
+                config=dict(mime_type='audio/webm')
+            )
+            response = chat.send_message([audio_file, "Ответь на голосовое сообщение."])
+            import re
+            def truncate_to_last_sentence(text):
+                match = re.search(r'([.!?])[^.!?]*$', text)
+                if match:
+                    return text[:match.end()]
+                return text
+            reply = truncate_to_last_sentence(response.text)
+            await update.message.reply_text(reply)
+        os.remove(webm_file.name)
+    os.remove(ogg_file.name)
+
 async def tsundere(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     user_personas[user_id] = "tsundere"
@@ -436,6 +494,7 @@ if __name__ == '__main__':
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_message))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    app.add_handler(MessageHandler(filters.VOICE, handle_voice))
     app.add_handler(CommandHandler("reset", reset_command))
     app.add_handler(CommandHandler("tsundere", tsundere))
     app.add_handler(CommandHandler("friendly", friendly))
