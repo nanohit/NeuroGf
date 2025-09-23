@@ -21,6 +21,8 @@ from PIL import Image
 from jsonschema import validate, ValidationError
 import ffmpeg
 from gradio_client import Client
+import websockets
+logging.info(f"WEBSOCKETS VERSION: {websockets.__version__}")
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
@@ -417,7 +419,9 @@ class EmotionsAnalyzer:
                 return (str(result[0]).strip().lower(), 0.0)
             return ("neutral", 0.0)
         except Exception as e:
+            import traceback
             logger.warning(f"Emotions API error: {e}")
+            logger.warning(traceback.format_exc())
             return ("neutral", 0.0)
 
 class ContextExtractor:
