@@ -5,3 +5,4 @@ pillow>=11.0.0
 jsonschema>=4.0.0
 ffmpeg-python>=0.2.0
 gradio_client
+websockets>=11.0
