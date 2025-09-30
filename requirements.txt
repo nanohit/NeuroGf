@@ -21,7 +21,7 @@ fsspec==2025.9.0
 future==0.18.2
 google-auth==2.40.3
 google-genai==1.33.0
-gradio==4.44.1
+# gradio==4.44.1  # removed to resolve gradio-client/websockets conflicts
 gradio_client>=1.6.0
 h11==0.14.0
 hf-xet==1.1.9
