@@ -57,7 +57,9 @@ pyparsing==3.2.5
 python-dateutil==2.9.0.post0
 python-dotenv==1.0.1
 python-multipart==0.0.20
-python-telegram-bot==22.3
+python-telegram-bot[job-queue]==22.3
+APScheduler>=3.10.4
+tzlocal>=5.0
 pytz==2025.2
 PyYAML==6.0.2
 referencing==0.36.2
