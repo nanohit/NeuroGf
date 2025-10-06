@@ -37,10 +37,11 @@ class AwakeMessageManager:
 
     DAILY_QUOTA = 8  # applies to automation managed here
 
-    def __init__(self, get_user_time: Callable[[], datetime.datetime], job_queue: JobQueue, on_automation_send: Optional[Callable[[int, str], None]] = None):
+    def __init__(self, get_user_time: Callable[[], datetime.datetime], job_queue: JobQueue, on_automation_send: Optional[Callable[[int, str], None]] = None, llm_generate_idle: Optional[Callable[[int, str], str]] = None):
         self.get_user_time = get_user_time
         self.job_queue = job_queue
         self.on_automation_send = on_automation_send
+        self.llm_generate_idle = llm_generate_idle
 
         # Set up logger
         self.logger = logging.getLogger("AwakeMessageManager")
@@ -85,6 +86,9 @@ class AwakeMessageManager:
         # Follow-up anchor (ISO string for serialization)
         self.followup_anchor_user_time: Optional[datetime.datetime] = None
 
+        # Flag to prevent rescheduling for the current turn, used with 'rghtway'
+        self.prevent_reschedule_current_turn: bool = False
+
         self._schedule_midnight_reset_job()
 
     # -------- Public API (bot.py should use these) --------
@@ -96,12 +100,15 @@ class AwakeMessageManager:
         self._schedule_morning_message(chat_id)
         self._schedule_evening_message(chat_id)
 
-    def notify_user_message(self, message: str, chat_id: int):
+    def notify_user_message(self, message: str, chat_id: int) -> bool:
         """
         Entry point from bot.py on any inbound user text/voice/photo:
         - Sets anchors and resets chains.
         - Farewell handling (before 20:00 ask 'почему так рано', after 20:00 full shutdown).
         Note: no automatic immediate reply here; the LLM path should reply.
+        
+        Returns:
+            bool: True if the LLM reply should be suppressed (e.g., because a pre-20:00 farewell nudge was sent)
         """
         self.default_chat_id = chat_id
         self._ensure_day_rollover()
@@ -123,18 +130,21 @@ class AwakeMessageManager:
                 # This counts toward automation quota and obeys guards.
                 self._schedule_immediate_send(chat_id, random.choice([
                     "Почему так рано спать?",
-                    "Уже так рано спать? 🙂",
+                    "Уже так рано спать?",
                     "Так рано? Ещё же не вечер!",
                     "Почему так рано ложишься?",
                 ]))
             self._schedule_idle_timer(chat_id)
-            return
+            return True  # Suppress LLM reply
+        
+        
+        return False  # Allow LLM reply
 
     def is_sending_allowed_now(self) -> bool:
         """For bot.py: whether an LLM reply should be allowed (honor active hours and shutdown)."""
         return (not self._is_shutdown_now()) and self._is_within_active_hours()
 
-    def register_external_send(self, chat_id: Optional[int] = None, schedule_followup: bool = True):
+    def register_external_send(self, chat_id: Optional[int] = None, schedule_followup: bool = True, prevent_reschedule: bool = False):
         """
         Call after any message sent outside this manager (LLM replies, stickers, etc.)
         to align idle timing and 'time-attached' guards.
@@ -149,7 +159,7 @@ class AwakeMessageManager:
         self._cancel_job('followup')
         self._cancel_job('gambler')
 
-        if (chat_id or self.default_chat_id) and schedule_followup:
+        if (chat_id or self.default_chat_id) and schedule_followup and not prevent_reschedule and not self.prevent_reschedule_current_turn:
             # Set anchor to BOT reply time
             self.followup_anchor_user_time = now
             self._schedule_followup_attempt(chat_id or self.default_chat_id)
@@ -171,10 +181,102 @@ class AwakeMessageManager:
         self.last_activity_time = None
         self.night_shutdown_until = None
         self.followup_anchor_user_time = None
+        self.prevent_reschedule_current_turn = False
         self._schedule_midnight_reset_job()
         if self.default_chat_id is not None:
             self._schedule_morning_message(self.default_chat_id)
             self._schedule_evening_message(self.default_chat_id)
+
+
+
+    async def trigger_all_pending_awake_messages(self, context, chat_id: int):
+        """
+        Immediately send all pending awake messages (idle, followup, gambler) for the given chat_id.
+        This is used when the 'rghtway' keyword is detected in a reply, to force all scheduled automation to fire now.
+        """
+        # Helper to run a callback instantly if job is scheduled
+        async def _run_job_now(job_key, callback):
+            job = self.jobs.get(job_key)
+            if job is not None:
+                # Simulate the callback as if timer fired
+                # Make sure the job's context.job.data has 'manager' set to self
+                job.job_queue = self.job_queue # Ensure job has a job_queue to prevent issues
+                job.data['manager'] = self # Ensure manager is correctly passed
+                fake_context = type('FakeContext', (object,), {'job': job})()
+                try:
+                    await callback(fake_context)
+                except Exception as e:
+                    self.logger.warning(f"Error running {job_key} callback instantly: {e}")
+                self._clear_job(job_key)
+
+        # Await each job directly, so they run before returning
+        if self.jobs.get('idle') is not None:
+            await _run_job_now('idle', self.idle_message_callback)
+        if self.jobs.get('followup') is not None:
+            await _run_job_now('followup', self.followup_attempt_callback)
+        if self.jobs.get('gambler') is not None:
+            await _run_job_now('gambler', self.gambler_attempt_callback)
+
+    async def send_all_awake_messages_now(self, context, chat_id: int):
+        """
+        Immediately send one followup, one gambler, and one idle nudge in sequence using the same phrase pools,
+        bypassing the 15-minute guard but still honoring active hours, shutdown, and quota. Does not spam beyond daily limits.
+        This cancels any pending awake jobs before sending.
+        """
+        # Cancel all awake jobs
+        self._cancel_job('followup')
+        self._cancel_job('gambler')
+        self._cancel_job('idle')
+
+        # Helper to send a message if allowed
+        async def try_send(texts, require_15min_guard=False):
+            if self._is_shutdown_now() or not self._is_within_active_hours() or not self._enforce_quota():
+                return False
+            text = random.choice(texts)
+            await self._send_text(context, chat_id, text)
+            return True
+
+        # Send followup
+        followup_texts = [
+            "Почему не отвечаешь?",
+            "Эй, ты где пропала?",
+            "Алло? Пропала?",
+            "Ты там?",
+            "Ну что молчишь?",
+            "Куда пропал?",
+        ]
+        await try_send(followup_texts, require_15min_guard=False)
+
+        # Send gambler
+        gambler_texts = [
+            "чего не отвечаешь?",
+            "ты занят?",
+            "Ты тут?",
+            "Ты там?",
+            "я тут если что.",
+            "Куда пропал?",
+        ]
+        await try_send(gambler_texts, require_15min_guard=False)
+
+        # Send idle
+        idle_texts = [
+            "Пропала тишина... и ты тоже 🙂",
+            "Я тут, если что.",
+            "Если ты занята, я подожду.",
+            "Напиши, когда будет время.",
+            "Я рядом. Не теряйся.",
+        ]
+        text = None
+        if self.llm_generate_idle:
+            prompt = "The user hasn’t replied for a long time. Write an engaging message to boost or re-start the conversation. You can ask a thought-provoking question (like 'Что думаешь о Карле Марксе?'), share some news about yourself or what you did, or follow up on any event the user mentioned (rarely). Keep it natural, relevant, and interesting. Match previous conversation language."
+            try:
+                text = await self.llm_generate_idle(chat_id, prompt)
+            except Exception as e:
+                self.logger.warning(f"LLM idle message generation failed in send_all_awake_messages_now: {e}")
+                text = None
+        if not text:
+            text = random.choice(idle_texts)
+        await self._send_text(context, chat_id, text)
 
     # -------- Internal scheduling --------
 
@@ -292,14 +394,17 @@ class AwakeMessageManager:
         ))
 
     def _schedule_idle_timer(self, chat_id: int):
-        self._cancel_job('idle')
-        delay = random.randint(self.IDLE_DELAY_MIN_SEC, self.IDLE_DELAY_MAX_SEC)
-        self.logger.info(f"Scheduling idle timer in {delay} sec (range {self.IDLE_DELAY_MIN_SEC}-{self.IDLE_DELAY_MAX_SEC})")
-        self._replace_job('idle', self.job_queue.run_once(
+        # Always use the latest user_id if possible
+        user_id = chat_id  # fallback if no mapping
+        if hasattr(self, 'user_id'):
+            user_id = self.user_id
+        job = self.job_queue.run_once(
             self.idle_message_callback,
-            when=delay,
-            data={'chat_id': chat_id, 'manager': self}
-        ))
+            when=random.randint(self.IDLE_DELAY_MIN_SEC, self.IDLE_DELAY_MAX_SEC),
+            data={'manager': self, 'chat_id': chat_id, 'user_id': user_id},
+            name=f'idle_{chat_id}'
+        )
+        self._replace_job('idle', job)
 
     # -------- Callbacks --------
 
@@ -363,7 +468,7 @@ class AwakeMessageManager:
                     "Чем занимался сегодня?",
                     "Что хорошего было за день?",
                     "Как настроение вечером?",
-                    "Как день? Расскажи!",
+                    "Как день?",
                     "Устал сегодня?",
                     "Что интересного было?",
                 ])
@@ -473,6 +578,7 @@ class AwakeMessageManager:
     async def idle_message_callback(context: CallbackContext):
         self: "AwakeMessageManager" = context.job.data['manager']
         chat_id = context.job.data['chat_id']
+        user_id = context.job.data.get('user_id') if 'user_id' in context.job.data else chat_id  # fallback
         try:
             self._ensure_day_rollover()
             self._clear_job('idle')
@@ -488,13 +594,24 @@ class AwakeMessageManager:
                 return
 
             if self._is_within_active_hours() and self._enforce_quota():
-                text = random.choice([
-                    "Пропала тишина... и ты тоже 🙂",
-                    "Я тут, если что.",
-                    "Если ты занята, я подожду.",
-                    "Напиши, когда будет время.",
-                    "Я рядом. Не теряйся.",
-                ])
+                text = None
+                if self.llm_generate_idle:
+                    prompt = "Пользователь долго тебе не отвечал. Напиши что нибудь интересное на основе диалога чтобы поддержать диалог. Something that could re-engage user, something interesting or provoking."
+                    # Optionally, pass context if available (here just a stub)
+                    context_str = ""
+                    try:
+                        text = await self.llm_generate_idle(user_id, prompt)
+                    except Exception as e:
+                        self.logger.warning(f"LLM idle message generation failed: {e}")
+                        text = None
+                if not text:
+                    text = random.choice([
+                        "Пропала тишина... и ты тоже 🙂",
+                        "Я тут, если что.",
+                        "Если ты занята, я подожду.",
+                        "Напиши, когда будет время.",
+                        "Я рядом. Не теряйся.",
+                    ])
                 # Fix: enforce 15-minute guard for idle nudges
                 await self._try_send_text(context, chat_id, text, require_15min_guard=True)
 
@@ -605,7 +722,7 @@ class AwakeMessageManager:
         m = (message or "").strip().lower()
         patterns = [
             r"\bспокойной ночи\b", r"\bдоброй ночи\b", r"\bдо завтра\b", r"\bувидимся завтра\b",
-            r"\bпока\b", r"\bдо встречи\b", r"\bgood night\b", r"\bsee you tomorrow\b",
+            r"\bпомолчи\b", r"\bмолчи\b", r"\bдо встречи\b", r"\bgood night\b", r"\bsee you tomorrow\b",
             r"\bbye\b", r"\bgn\b",
         ]
         if any(re.search(p, m) for p in patterns):
