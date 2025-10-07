@@ -8,10 +8,11 @@ import io
 import random
 import datetime
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from typing import Dict, Optional, Any
 from dataclasses import dataclass
 import psycopg2
+from psycopg2 import pool as psycopg2_pool, extensions as psycopg2_extensions
 from psycopg2.extras import RealDictCursor
 from urllib.parse import urlparse
 
@@ -82,15 +83,58 @@ class DatabaseManager:
         self.database_url = database_url
         # Thread pool for offloading blocking DB operations
         self.executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="db_worker")
+        self._connection_pool: Optional[psycopg2_pool.SimpleConnectionPool] = None
         self._init_db()
 
+    def _get_pool(self) -> psycopg2_pool.SimpleConnectionPool:
+        if self._connection_pool is None:
+            # Use sslmode require by default if not provided
+            self._connection_pool = psycopg2_pool.SimpleConnectionPool(
+                minconn=1,
+                maxconn=10,
+                dsn=self.database_url,
+                keepalives=1,
+                keepalives_idle=30,
+                keepalives_interval=30,
+                keepalives_count=5,
+            )
+        return self._connection_pool
+
     def _get_connection(self):
-        """Create a new PostgreSQL connection"""
-        return psycopg2.connect(self.database_url)
+        """Get a pooled PostgreSQL connection"""
+        return self._get_pool().getconn()
+
+    @contextmanager
+    def connection(self):
+        pool = self._get_pool()
+        conn = pool.getconn()
+        try:
+            yield conn
+        except psycopg2.Error:
+            try:
+                pool.putconn(conn, close=True)
+            except Exception:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+            raise
+        finally:
+            try:
+                if conn and not conn.closed:
+                    if conn.status == psycopg2_extensions.STATUS_IN_TRANSACTION:
+                        conn.rollback()
+                if conn:
+                    pool.putconn(conn, close=False)
+            except Exception:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
     def _init_db(self):
         """Initialize the database schema"""
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             with conn.cursor() as cursor:
                 cursor.execute('''CREATE TABLE IF NOT EXISTS user_memory (
                     user_id BIGINT PRIMARY KEY,
@@ -120,7 +164,7 @@ class DatabaseManager:
 
     def _get_user_memory_sync(self, user_id: int) -> UserMemory:
         """Synchronous helper to fetch user memory (runs in thread pool)"""
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(
                     'SELECT name, age, interests, preferences, important_facts, pinned_messages FROM user_memory WHERE user_id=%s',
@@ -149,7 +193,7 @@ class DatabaseManager:
         pinned_json = json.dumps(memory.pinned_messages or [], ensure_ascii=False)
         logger.info(f"Updating user {user_id} memory: {memory}")
         
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             with conn.cursor() as cursor:
                 # PostgreSQL uses INSERT ... ON CONFLICT instead of INSERT OR REPLACE
                 cursor.execute(
@@ -207,7 +251,7 @@ class DatabaseManager:
 
     def _update_pinned_messages_sync(self, user_id: int, pinned_list: list):
         """Synchronous helper to update pinned messages (runs in thread pool)"""
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(
                     '''INSERT INTO user_memory (user_id, pinned_messages)
@@ -223,7 +267,7 @@ class DatabaseManager:
         await loop.run_in_executor(self.executor, self._update_pinned_messages_sync, user_id, pinned_list)
 
     def _get_user_control_sync(self, user_id: int) -> dict:
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cursor:
                 cursor.execute(
                     'SELECT user_id, is_paused, takeover_by, updated_at FROM user_control WHERE user_id=%s',
@@ -239,7 +283,7 @@ class DatabaseManager:
         return await loop.run_in_executor(self.executor, self._get_user_control_sync, user_id)
 
     def _set_user_pause_sync(self, user_id: int, is_paused: bool):
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(
                     '''INSERT INTO user_control (user_id, is_paused)
@@ -256,7 +300,7 @@ class DatabaseManager:
         await loop.run_in_executor(self.executor, self._set_user_pause_sync, user_id, is_paused)
 
     def _set_user_takeover_sync(self, user_id: int, admin_id: Optional[int]):
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(
                     '''INSERT INTO user_control (user_id, takeover_by)
@@ -273,7 +317,7 @@ class DatabaseManager:
         await loop.run_in_executor(self.executor, self._set_user_takeover_sync, user_id, admin_id)
 
     def _queue_admin_message_sync(self, target_user_id: int, admin_id: int, text: str):
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             with conn.cursor() as cursor:
                 cursor.execute(
                     'INSERT INTO admin_outbox (target_user_id, admin_id, message_text) VALUES (%s, %s, %s)',
@@ -286,7 +330,7 @@ class DatabaseManager:
         await loop.run_in_executor(self.executor, self._queue_admin_message_sync, target_user_id, admin_id, text)
 
     def _get_pending_admin_messages_sync(self) -> list:
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cursor:
                 cursor.execute('SELECT * FROM admin_outbox WHERE delivered = FALSE ORDER BY created_at')
                 return [dict(row) for row in cursor.fetchall()]
@@ -296,7 +340,7 @@ class DatabaseManager:
         return await loop.run_in_executor(self.executor, self._get_pending_admin_messages_sync)
 
     def _mark_message_delivered_sync(self, message_id: int):
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             with conn.cursor() as cursor:
                 cursor.execute('UPDATE admin_outbox SET delivered = TRUE WHERE id = %s', (message_id,))
                 conn.commit()
@@ -306,7 +350,7 @@ class DatabaseManager:
         await loop.run_in_executor(self.executor, self._mark_message_delivered_sync, message_id)
 
     def _list_user_controls_sync(self) -> list:
-        with self._get_connection() as conn:
+        with self.connection() as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cursor:
                 cursor.execute('SELECT user_id, is_paused, takeover_by, updated_at FROM user_control')
                 return [dict(row) for row in cursor.fetchall()]

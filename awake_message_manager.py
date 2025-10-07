@@ -5,6 +5,7 @@ import datetime
 import random
 import re
 from telegram.ext import JobQueue, CallbackContext, Job
+from apscheduler.jobstores.base import JobLookupError
 import logging
 
 class AwakeMessageManager:
@@ -238,11 +239,11 @@ class AwakeMessageManager:
 
         # Send followup
         followup_texts = [
-            "Почему не отвечаешь?",
-            "Эй, ты где пропала?",
-            "Алло? Пропала?",
-            "Ты там?",
-            "Ну что молчишь?",
+            "чего не отвечаешь?",
+            "Куда пропал?)",
+            "ты точно тут?",
+            "Ты тут?",
+            "чего молчишь?)",
             "Куда пропал?",
         ]
         await try_send(followup_texts, require_15min_guard=False)
@@ -252,9 +253,9 @@ class AwakeMessageManager:
             "чего не отвечаешь?",
             "ты занят?",
             "Ты тут?",
-            "Ты там?",
-            "я тут если что.",
-            "Куда пропал?",
+            "Ты тут?)",
+            "я онлайн если что.",
+            "Куда пропал?)",
         ]
         await try_send(gambler_texts, require_15min_guard=False)
 
@@ -693,7 +694,20 @@ class AwakeMessageManager:
     def _cancel_job(self, key: str):
         job = self.jobs.get(key)
         if job is not None:
-            job.schedule_removal()
+            try:
+                job.schedule_removal()
+            except JobLookupError:
+                # Job already removed, ignore
+                pass
+            except AttributeError:
+                try:
+                    job.remove()
+                except JobLookupError:
+                    pass
+                except Exception:
+                    self.logger.warning("Failed to cancel job '%s'", key, exc_info=True)
+            except Exception:
+                self.logger.warning("Failed to cancel job '%s'", key, exc_info=True)
         self.jobs[key] = None
 
     def _cancel_all_jobs(self):
