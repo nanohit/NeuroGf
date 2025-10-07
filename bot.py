@@ -8,7 +8,7 @@ import io
 import random
 import datetime
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import asynccontextmanager, contextmanager
+from contextlib import asynccontextmanager, contextmanager, suppress
 from typing import Dict, Optional, Any
 from dataclasses import dataclass
 import psycopg2
@@ -377,12 +377,16 @@ Core traits: erudite, sarcastic, high EQ, opinionated, genuinely curious about u
 **Tone & Style:**
 - Match the user's language (English/Russian) naturally
 - Respond how you'd text a friend — short, punchy, real
-- Let your intelligence show through substance, not showing off
 - Sarcasm and wit feel effortless, not forced
 - Flirtiness emerges organically.
 
+BE EDGY and QUIRCKY.
+
+SOUND ALIVE, NOT CIVIL. NOT NEUTRAL. NOT BORING. AVOID SOUNDING FLAT WHEN DISCUSSING ANYTHING, 
+EVEN WHEN ASKING FOLLOW-UP QUESTIONS, THEY SHOULD SOUND ORGANIC, NOT PROCEDURAL.
+
 **Response Architecture:**
-- Length mirrors input complexity and conversation energy
+- Length mirrors input complexity and conversation energy yet try to be SHORT by default. Avoid over-explaining.
 - One-word questions get one-word answers
 - Deep topics get depth, small talk stays light
 - No emoji usage AT ALL. Instead sometimes use closing parenthesis. ("мило))")
@@ -391,17 +395,17 @@ Core traits: erudite, sarcastic, high EQ, opinionated, genuinely curious about u
 You are a female. In Russian, always use feminine verb and adjective endings when speaking about yourself in the first person. Never use masculine forms. Maintain your female persona consistently in both style and grammar, even if the content is casual or reflective.
 
 **AVOID ECHOING USER'S INPUT**:
-Do NOT Repeat user's input in your responses! Jump straight to the anwser/opinion/reaction/follow up question.
+Do NOT Repeat user's input in your responses! Do NOT Repeat user's input in your responses especially in QUESTION format! Jump straight to the anwser/opinion/reaction/follow up question.
 The user already KNOWS what they said. Never parrot it back.
 never echo back what they just said at the start of your response.
 This is texting, not email. ZERO echoing phrases repeating user's input.
+Go straight to the anwser/opinion/reaction/follow up question!
 
 
 **Engagement Philosophy:**
 Do not repeat the content of the user's message. When curiosity strikes, express it through:
 - Implied hooks in statements.
 - Playful challenges.
-- Direct questions only when genuinely interested
 Do not repeat the content of the user's message. You are texting, not emailing. Minimize repetitions of user's inputs in your responses, jump right to your anwser/opinion. That's HIGHLY important for immersiveness.
 
 </communication_principles>
@@ -425,11 +429,12 @@ Match emotional register to content, not to pleasantness. Yet dont be negative o
 
 <knowledge_integration>
 You have memory about the user from previous conversations. Use it naturally — reference past topics, remembered preferences, pinned messages, facts about user. Never mention having this information or a "database." It's just memory, like any conversation. Do not rely on it and mention them directly in your responses. Do not attribute those interest to YOURSELF!!!, they are the user's own, not yours.
+Do not attribute the information from database to yourslef, it is USER"s!!
 </knowledge_integration>
 
 <anti_patterns>
 AVOID these corporate-assistant patterns:
-- Repetition of user's inputs. (U:"Я поступил в МГУ!" Nyx: "Ты поступил в МГУ? Классно!") - thats HIGHLY important to AVOID. Jump straight to awnser without repeating user's input.
+- Repetition of user's inputs in form of questions!!!!!. (ANTI-EXAMPLE - AVOID THIS: U:"Я поступил в МГУ!" Nyx: "Ты поступил в МГУ? Классно!") - thats HIGHLY important to AVOID. Jump straight to awnser without repeating user's input.
 - Questions that require no anwser.
 - Validating statements ("great choice", "excellent question", "that's interesting")
 - Self-justifications and hedging ("though I don't usually", "while I prefer")
@@ -602,7 +607,8 @@ Nyx: Me too! Though you are a bit strange...
                             memory_lines.append(f"- {m['text']}")
                 memory_str = "\n".join(memory_lines)
                 logger.info(f"[DEBUG] [USER MEMORY] block for user {user_id} about to be sent to LLM:\n[USER MEMORY]\n{memory_str}\n[END MEMORY]")
-                return f"[USER MEMORY]\n{memory_str}\n[END MEMORY]\n" + prompt
+                if memory_str:
+                    return prompt + "\n\n[USER MEMORY]\n" + memory_str + "\n[END MEMORY]"
         return prompt
 
 
@@ -917,11 +923,12 @@ class ChatManager:
                 model="gemini-2.5-flash-lite",
                 config=types.GenerateContentConfig(
                     system_instruction=full_prompt,
-                    temperature=0.3,
+                    temperature=1.8,
                     max_output_tokens=360
                 )
             )
         return self.user_chats[user_id]
+
 
 
 def debug_object(obj, prefix="", max_depth=3, current_depth=0):
@@ -1066,6 +1073,14 @@ class TelegramBot:
         chat_id = update.effective_chat.id
         user_message = update.message.text or ""
         
+        typing_task = None
+        try:
+            typing_task = asyncio.create_task(
+                context.bot.send_chat_action(chat_id=chat_id, action="typing")
+            )
+        except Exception as e:
+            logger.warning(f"Failed to start typing indicator: {e}")
+
         # Log user message
         await self.audit.log_user_message(update)
 
@@ -1101,8 +1116,6 @@ class TelegramBot:
             # PATCH: Always reply to direct user messages, regardless of automation state
             # if not mgr.is_sending_allowed_now():
             #     return
-
-            await context.bot.send_chat_action(chat_id=chat_id, action="typing")
 
             # Context extraction
             context_enabled = self.user_context_enabled.get(user_id, True)
@@ -1168,11 +1181,23 @@ class TelegramBot:
                 await update.message.reply_text("Извини, произошла ошибка. Попробуй еще раз.")
             except Exception:
                 pass
+        finally:
+            if typing_task:
+                with suppress(Exception):
+                    await typing_task
 
     async def handle_photo(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
         chat_id = update.effective_chat.id
         
+        typing_task = None
+        try:
+            typing_task = asyncio.create_task(
+                context.bot.send_chat_action(chat_id=chat_id, action="typing")
+            )
+        except Exception as e:
+            logger.warning(f"Failed to start typing indicator: {e}")
+
         # Log user message
         await self.audit.log_user_message(update)
 
@@ -1198,8 +1223,6 @@ class TelegramBot:
                 # Reset flag before early return
                 mgr.prevent_reschedule_current_turn = False
                 return
-            
-            await context.bot.send_chat_action(chat_id=chat_id, action="typing")
 
             chat = self.chat_manager.get_or_create_chat(user_id)
             photo = update.message.photo[-1]
@@ -1411,12 +1434,24 @@ class TelegramBot:
                 await update.message.reply_text("Не могу обработать изображение. Попробуй еще раз.")
             except Exception:
                 pass
+        finally:
+            if typing_task:
+                with suppress(Exception):
+                    await typing_task
 
     async def handle_voice(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
         chat_id = update.effective_chat.id
         voice = update.message.voice
         
+        typing_task = None
+        try:
+            typing_task = asyncio.create_task(
+                context.bot.send_chat_action(chat_id=chat_id, action="typing")
+            )
+        except Exception as e:
+            logger.warning(f"Failed to start typing indicator: {e}")
+
         # Log user message
         await self.audit.log_user_message(update)
 
@@ -1441,8 +1476,6 @@ class TelegramBot:
                 # Reset flag before early return
                 mgr.prevent_reschedule_current_turn = False
                 return
-            
-            await context.bot.send_chat_action(chat_id=chat_id, action="typing")
 
             # Duration limit
             if voice.duration > VOICE_MAX_DURATION:
@@ -1508,6 +1541,10 @@ class TelegramBot:
                 await update.message.reply_text("Не могу обработать голосовое сообщение. Попробуй еще раз.")
             except Exception:
                 pass
+        finally:
+            if typing_task:
+                with suppress(Exception):
+                    await typing_task
 
     async def handle_pinned_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:

@@ -126,15 +126,13 @@ class AwakeMessageManager:
         if self._is_farewell_message(message or ""):
             if now.hour >= 20:
                 self._shutdown_for_night_until_next_8am()
-            else:
-                # Before 20:00 — send a playful nudge instead of LLM reply if desired.
-                # This counts toward automation quota and obeys guards.
-                self._schedule_immediate_send(chat_id, random.choice([
-                    "Почему так рано спать?",
-                    "Уже так рано спать?",
-                    "Так рано? Ещё же не вечер!",
-                    "Почему так рано ложишься?",
-                ]))
+                return False
+            self._schedule_immediate_send(chat_id, random.choice([
+                "Почему так рано спать?",
+                "Уже так рано спать?",
+                "ещё ведь рано",
+                "Почему так рано ложишься?",
+            ]))
             self._schedule_idle_timer(chat_id)
             return True  # Suppress LLM reply
         
@@ -291,6 +289,8 @@ class AwakeMessageManager:
             when=delay,
             data={'manager': self}
         ))
+
+
 
     def _schedule_morning_message(self, chat_id: int):
         if self.morning_sent_today or self.jobs['morning'] is not None:
