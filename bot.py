@@ -1757,7 +1757,7 @@ class TelegramBot:
         persona = self.persona_manager.get_persona(user_id)
         persona_name = "цундере🦈🖤" if persona == "tsundere" else "дружелюбную личность😊"
         await update.message.reply_text(
-            f"Контекст сброшен. Персонаж не изменён, сейчас: {persona_name}",
+            f"Новый чат начат. Контекст сброшен.",
             reply_markup=self._build_main_reply_keyboard()
         )
         mgr.register_external_send(chat_id, schedule_followup=False, prevent_reschedule=mgr.prevent_reschedule_current_turn)
