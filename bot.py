@@ -30,6 +30,7 @@ import websockets
 # Integration: import the updated manager (save the v2 code as awake_message_manager_v2.py or adjust the path)
 from awake_message_manager import AwakeMessageManager
 from simple_audit import NyxAudit
+from telegram_retry import send_message_with_retry
 
 logging.info(f"WEBSOCKETS VERSION: {websockets.__version__}")
 
@@ -37,13 +38,38 @@ logging.info(f"WEBSOCKETS VERSION: {websockets.__version__}")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 logger = logging.getLogger(__name__)
 
-# Enable detailed logging for Google Generative AI
+
+class _GenaiSensitiveFilter(logging.Filter):
+    _REDACT_KEYS = ("prompt", "response", "candidate", "content", "safety")
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            message = record.getMessage()
+        except Exception:
+            return True
+        if any(key in message.lower() for key in self._REDACT_KEYS):
+            record.msg = "[redacted google.generativeai log]"
+            record.args = ()
+        return True
+
+
+_GENAI_HANDLER_NAME = "google-generativeai-console"
+_genai_verbose = os.getenv('GENAI_LOG_VERBOSE', '').lower() in {'1', 'true', 'yes', 'on'}
+
 genai_logger = logging.getLogger('google.generativeai')
-genai_logger.setLevel(logging.DEBUG)
-# Add console handler to display Gemini API logs in terminal
-console_handler = logging.StreamHandler()
-console_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
-genai_logger.addHandler(console_handler)
+for handler in list(genai_logger.handlers):
+    if getattr(handler, 'name', '') == _GENAI_HANDLER_NAME:
+        genai_logger.removeHandler(handler)
+
+if _genai_verbose:
+    genai_logger.setLevel(logging.INFO)
+    verbose_handler = logging.StreamHandler()
+    verbose_handler.set_name(_GENAI_HANDLER_NAME)
+    verbose_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+    verbose_handler.addFilter(_GenaiSensitiveFilter())
+    genai_logger.addHandler(verbose_handler)
+else:
+    genai_logger.setLevel(logging.WARNING)
 
 # Load environment variables
 load_dotenv()
@@ -1804,7 +1830,12 @@ class TelegramBot:
             state = 'включен' if not enabled else 'выключен'
             system_msg = f'Контекстный режим теперь {state}. Структурированная память {"активна" if not enabled else "отключена"}.'
             # Send system message as a new message
-            await context.bot.send_message(chat_id=chat_id, text=system_msg)
+            await send_message_with_retry(
+                context.bot,
+                chat_id,
+                text=system_msg,
+                log_context={"handler": "menu_toggle_memory", "chat_id": chat_id},
+            )
             # Only update the buttons, keep the header as 'Меню'
             await query.edit_message_text(
                 'Меню',
@@ -1826,7 +1857,13 @@ class TelegramBot:
             mgr = self._get_mgr(user_id, context, chat_id)
             mgr.on_reset_command()
             system_msg = 'Контекст сброшен. Начат новый диалог.'
-            await context.bot.send_message(chat_id=chat_id, text=system_msg, reply_markup=self._build_main_reply_keyboard())
+            await send_message_with_retry(
+                context.bot,
+                chat_id,
+                text=system_msg,
+                reply_markup=self._build_main_reply_keyboard(),
+                log_context={"handler": "menu_reset_dialog", "chat_id": chat_id},
+            )
             await query.edit_message_text(
                 'Меню',
                 reply_markup=InlineKeyboardMarkup([
@@ -1854,7 +1891,12 @@ class TelegramBot:
                 admin_id = message.get('admin_id')
                 text = message.get('message_text')
                 try:
-                    await context.bot.send_message(chat_id=user_id, text=text)
+                    await send_message_with_retry(
+                        context.bot,
+                        user_id,
+                        text=text,
+                        log_context={"source": "admin_outbox", "message_id": message_id},
+                    )
                     await self.audit.log_bot_response(user_id, text)
                     self.chat_manager.log_automation_message(user_id, text)
                     mgr = self.awake.get(user_id)

@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import logging
-from typing import Optional, Dict
+from typing import Dict, Optional
 
 from telegram import (
     Bot,
-    Update,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
+    Update,
 )
 from telegram.ext import (
     Application,
@@ -18,6 +18,8 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+
+from telegram_retry import send_message_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -227,7 +229,12 @@ class NyxAudit:
             else:
                 content = f"[{update.message.content_type}]"
             message = f"👤 @{username} ({first_name}) [ID:{user_id}]\n{content}"
-            await bot.send_message(chat_id=self.audit_chat_id, text=message)
+            await send_message_with_retry(
+                bot,
+                self.audit_chat_id,
+                text=message,
+                log_context={"source": "audit_user"},
+            )
         except Exception as exc:
             logger.error(f"Audit failed (user message): {exc}")
 
@@ -237,6 +244,11 @@ class NyxAudit:
                 return
             bot = await self._get_bot()
             message = f"🤖 → [ID:{user_id}]\n{response_text}"
-            await bot.send_message(chat_id=self.audit_chat_id, text=message)
+            await send_message_with_retry(
+                bot,
+                self.audit_chat_id,
+                text=message,
+                log_context={"source": "audit_bot", "user_id": user_id},
+            )
         except Exception as exc:
             logger.error(f"Audit failed (bot response): {exc}")

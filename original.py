@@ -530,7 +530,7 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         del user_chats[user_id]
     persona = user_personas.get(user_id, "tsundere")
     persona_name = "цундере😈🖤" if persona == "tsundere" else "дружелюбную личность😊"
-    await update.message.reply_text(f"Контекст сброшен. Персонаж не изменён, сейчас: {persona_name}")
+    await update.message.reply_text(f"Начан новый чат. Контекст сброшен.")
 
 async def context_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id

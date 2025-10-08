@@ -8,6 +8,8 @@ from telegram.ext import JobQueue, CallbackContext, Job
 from apscheduler.jobstores.base import JobLookupError
 import logging
 
+from telegram_retry import send_message_with_retry
+
 class AwakeMessageManager:
     """
     Orchestrates automated outreach per user: morning/evening pings (time-attached),
@@ -238,11 +240,11 @@ class AwakeMessageManager:
         # Send followup
         followup_texts = [
             "чего не отвечаешь?",
-            "Куда пропал?)",
+            "все норм? чего не отвечаешь?)",
             "ты точно тут?",
             "Ты тут?",
             "чего молчишь?)",
-            "Куда пропал?",
+            "что то ты давно не отвечаешь. как твои дела?",
         ]
         await try_send(followup_texts, require_15min_guard=False)
 
@@ -253,7 +255,7 @@ class AwakeMessageManager:
             "Ты тут?",
             "Ты тут?)",
             "я онлайн если что.",
-            "Куда пропал?)",
+            "ты чего молчишь?)",
         ]
         await try_send(gambler_texts, require_15min_guard=False)
 
@@ -267,7 +269,7 @@ class AwakeMessageManager:
         ]
         text = None
         if self.llm_generate_idle:
-            prompt = "The user hasn’t replied for a long time. Write an engaging message to boost or re-start the conversation. You can ask a thought-provoking question (like 'Что думаешь о Карле Марксе?'), share some news about yourself or what you did, or follow up on any event the user mentioned (rarely). Keep it natural, relevant, and interesting. Match previous conversation language."
+            prompt = "The user hasn’t replied for a long time. Write an engaging message to boost or re-start the conversation. You can ask a thought-provoking question (like 'Что думаешь о Карле Марксе?, '; 'С чем тебе эффективнее учиться - с книгами или с чат-ботами?', 'если бы ты был планетой, то какой? кроме Земли'), share some news about yourself or what you did, or follow up on any event the user mentioned (rarely). Keep it natural, relevant, and interesting. Match previous conversation language."
             try:
                 text = await self.llm_generate_idle(chat_id, prompt)
             except Exception as e:
@@ -289,6 +291,7 @@ class AwakeMessageManager:
             when=delay,
             data={'manager': self}
         ))
+
 
 
 
@@ -520,7 +523,7 @@ class AwakeMessageManager:
                         "Алло? Пропала?",
                         "Ты там?",
                         "Ну что молчишь?",
-                        "Куда пропала?",
+                        "Куда пропал?",
                     ])
                     self.logger.info(f"Followup: sending '{text}'")
                     await self._try_send_text(context, chat_id, text, require_15min_guard=True)
@@ -564,7 +567,7 @@ class AwakeMessageManager:
                         "Алло? Пропала?",
                         "Ты там?",
                         "Ну что молчишь?",
-                        "Куда пропала?",
+                        "Куда пропал?",
                     ])
                     self.logger.info(f"Gambler: sending '{text}'")
                     await self._try_send_text(context, chat_id, text, require_15min_guard=True)
@@ -635,7 +638,12 @@ class AwakeMessageManager:
         await self._send_text(context, chat_id, text)
 
     async def _send_text(self, context: CallbackContext, chat_id: int, text: str):
-        await context.bot.send_message(chat_id=chat_id, text=text)
+        await send_message_with_retry(
+            context.bot,
+            chat_id,
+            text=text,
+            log_context={"source": "awake_manager", "chat_id": chat_id},
+        )
         now = self.get_user_time()
         self.last_bot_message_time = now
         self.last_activity_time = now
