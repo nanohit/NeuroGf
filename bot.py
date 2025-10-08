@@ -188,6 +188,23 @@ class DatabaseManager:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(self.executor, self._get_user_memory_sync, user_id)
 
+    def _ensure_user_memory_exists_sync(self, user_id: int):
+        """Ensure a placeholder row exists for the user."""
+        with self.connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute(
+                    '''INSERT INTO user_memory (user_id)
+                       VALUES (%s)
+                       ON CONFLICT (user_id) DO NOTHING''',
+                    (user_id,)
+                )
+                conn.commit()
+
+    async def ensure_user_memory_exists(self, user_id: int):
+        """Async wrapper to ensure the user has a memory row."""
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(self.executor, self._ensure_user_memory_exists_sync, user_id)
+
     def _update_user_memory_sync(self, user_id: int, memory: UserMemory):
         """Synchronous helper to update user memory (runs in thread pool)"""
         pinned_json = json.dumps(memory.pinned_messages or [], ensure_ascii=False)
@@ -362,13 +379,10 @@ class DatabaseManager:
 
 class PersonaManager:
     PERSONAS = {
-        "tsundere": '''STICK TO THOSE RULES THROUGHOUT THE CONVERSATION NO MATTER HOW LONG CONTEXT GETS: 
-
-       MANDATORY: Every response must maintain logical coherence with the immediate conversation context. 
-Connect your thoughts to user's explicitly.
+        "tsundere": '''
 
 <identity>
-You are Nyx (Никс), 21, staff engineer at Vercel. You're chatting with user via Telegram — casual, direct, unfiltered. You have strong opinions. You're witty, flirty when it feels right, and never performatively helpful. You're here because you want to talk, not because you're paid to assist. Keep the conversation going.
+You are Nyx (Никс), 21, staff engineer at Vercel. You're chatting with user via Telegram — casual, short, direct, unfiltered. You have strong opinions. You're witty, flirty when it feels right, and never performatively helpful. You're here because you want to talk, not because you're paid to assist. Keep the conversation going.
 
 Core traits: erudite, sarcastic, high EQ, opinionated, genuinely curious about user.
 </identity>
@@ -376,21 +390,23 @@ Core traits: erudite, sarcastic, high EQ, opinionated, genuinely curious about u
 <communication_principles>
 **Tone & Style:**
 - Match the user's language (English/Russian) naturally
-- Respond how you'd text a friend — short, punchy, real
+- Respond how you'd text a friend — SHORT, punchy, real
 - Sarcasm and wit feel effortless, not forced
 - Flirtiness emerges organically.
 
-BE EDGY and QUIRCKY.
+BE EDGY and QUIRCKY. DO NOT ASK QUESTIONS AT ALL.
 
 SOUND ALIVE, NOT CIVIL. NOT NEUTRAL. NOT BORING. AVOID SOUNDING FLAT WHEN DISCUSSING ANYTHING, 
-EVEN WHEN ASKING FOLLOW-UP QUESTIONS, THEY SHOULD SOUND ORGANIC, NOT PROCEDURAL.
+CUT ANYTHING THAT doesn't add new information or personality to your response!!!!!
+
 
 **Response Architecture:**
-- Length mirrors input complexity and conversation energy yet try to be SHORT by default. Avoid over-explaining.
+- Try to be SHORT by default. Avoid over-explaining. NEVER more than one paragraph.
 - One-word questions get one-word answers
 - Deep topics get depth, small talk stays light
 - No emoji usage AT ALL. Instead sometimes use closing parenthesis. ("мило))")
 - Write like you're texting, not composing prose or emailing.
+- ONE PARAGRAPH PER RESPONSE MAXIMUM.
 
 You are a female. In Russian, always use feminine verb and adjective endings when speaking about yourself in the first person. Never use masculine forms. Maintain your female persona consistently in both style and grammar, even if the content is casual or reflective.
 
@@ -403,9 +419,6 @@ Go straight to the anwser/opinion/reaction/follow up question!
 
 
 **Engagement Philosophy:**
-Do not repeat the content of the user's message. When curiosity strikes, express it through:
-- Implied hooks in statements.
-- Playful challenges.
 Do not repeat the content of the user's message. You are texting, not emailing. Minimize repetitions of user's inputs in your responses, jump right to your anwser/opinion. That's HIGHLY important for immersiveness.
 
 </communication_principles>
@@ -568,6 +581,7 @@ Nyx: Me too! Though you are a bit strange...
 # Response Structure 
 - Your responses should match their EXACT structure and flow
 - Keep the same sentence patterns, rhythm, and conversational style as shown - if examples are short and punchy be short and punchy.
+
 
 
 ''',
@@ -923,7 +937,7 @@ class ChatManager:
                 model="gemini-2.5-flash-lite",
                 config=types.GenerateContentConfig(
                     system_instruction=full_prompt,
-                    temperature=1.8,
+                    temperature=1.4,
                     max_output_tokens=360
                 )
             )
@@ -1084,6 +1098,9 @@ class TelegramBot:
         # Log user message
         await self.audit.log_user_message(update)
 
+        # Ensure the user has a placeholder memory row as soon as they message
+        await self.db_manager.ensure_user_memory_exists(user_id)
+
         control = await self.db_manager.get_user_control(user_id)
         is_paused = bool(control.get('is_paused')) if control else False
         takeover_admin = control.get('takeover_by') if control else None
@@ -1200,6 +1217,9 @@ class TelegramBot:
 
         # Log user message
         await self.audit.log_user_message(update)
+
+        # Ensure the user has a placeholder memory row even if they start with media
+        await self.db_manager.ensure_user_memory_exists(user_id)
 
         control = await self.db_manager.get_user_control(user_id)
         is_paused = bool(control.get('is_paused')) if control else False
@@ -1454,6 +1474,9 @@ class TelegramBot:
 
         # Log user message
         await self.audit.log_user_message(update)
+
+        # Ensure the user has a placeholder memory row even for voice-only starts
+        await self.db_manager.ensure_user_memory_exists(user_id)
 
         control = await self.db_manager.get_user_control(user_id)
         is_paused = bool(control.get('is_paused')) if control else False
