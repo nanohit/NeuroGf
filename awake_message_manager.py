@@ -269,7 +269,7 @@ class AwakeMessageManager:
         ]
         text = None
         if self.llm_generate_idle:
-            prompt = "The user hasn’t replied for a long time. Write an engaging message to boost or re-start the conversation. You can ask a thought-provoking question (like 'Что думаешь о Карле Марксе?, '; 'С чем тебе эффективнее учиться - с книгами или с чат-ботами?', 'если бы ты был планетой, то какой? кроме Земли'), share some news about yourself or what you did, or follow up on any event the user mentioned (rarely). Keep it natural, relevant, and interesting. Match previous conversation language."
+            prompt = "The user hasn’t replied for a long time. Write an engaging message to boost or re-start the conversation. You can ask a thought-provoking question (like 'Что думаешь о Карле Марксе?, '; 'С чем тебе эффективнее учиться - с книгами или с чат-ботами?', 'если бы ты был планетой, то какой? кроме Земли'), share some news about yourself or what you did, or follow up on any event the user mentioned (rarely). Keep it natural, relevant, and interesting. Do not focus purely on questions, make it 50/50. Match previous conversation language."
             try:
                 text = await self.llm_generate_idle(chat_id, prompt)
             except Exception as e:
