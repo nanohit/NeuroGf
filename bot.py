@@ -398,6 +398,16 @@ class DatabaseManager:
                 cursor.execute('SELECT user_id, is_paused, takeover_by, updated_at FROM user_control')
                 return [dict(row) for row in cursor.fetchall()]
 
+    def _user_exists_sync(self, user_id: int) -> bool:
+        with self.connection() as conn:
+            with conn.cursor() as cursor:
+                cursor.execute('SELECT 1 FROM user_memory WHERE user_id=%s', (user_id,))
+                return cursor.fetchone() is not None
+
+    async def user_exists(self, user_id: int) -> bool:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(self.executor, self._user_exists_sync, user_id)
+
     async def list_user_controls(self) -> list:
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(self.executor, self._list_user_controls_sync)
@@ -1064,7 +1074,7 @@ class TelegramBot:
 
         # Per-user automation managers (one per chat/user)
         self.awake: Dict[int, AwakeMessageManager] = {}
-        
+
         # Audit system - Change AUDIT_CHAT_ID to your actual chat ID (get from @userinfobot)
         AUDIT_CHAT_ID = 811818035  # TODO: Update this to the chat ID where you want to receive audit logs
         self.audit = NyxAudit(
@@ -1108,6 +1118,47 @@ class TelegramBot:
 
     # ------------- Handlers -------------
 
+    async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+        chat_id = update.effective_chat.id
+
+        await self.audit.log_user_message(update)
+
+        user_existed_previously = await self.db_manager.user_exists(user_id)
+        await self.db_manager.ensure_user_memory_exists(user_id)
+
+        control = await self.db_manager.get_user_control(user_id)
+        if control.get('updated_at') is None:
+            await self.db_manager.set_user_pause(user_id, False)
+
+        mgr = None
+        try:
+            mgr = self._get_mgr(user_id, context, chat_id)
+        except Exception as e:
+            logger.error(f"Failed to initialize AwakeMessageManager for /start: {e}")
+
+        if not user_existed_previously:
+            onboarding_text = "Начат новый чат, начните диалог!"
+            await send_message_with_retry(
+                context.bot,
+                chat_id,
+                text=onboarding_text,
+                log_context={"handler": "start_onboarding", "chat_id": chat_id},
+            )
+            await self.audit.log_bot_response(user_id, onboarding_text)
+            if mgr:
+                self.chat_manager.log_automation_message(user_id, onboarding_text)
+                mgr.register_external_send(chat_id, schedule_followup=False, prevent_reschedule=True)
+        else:
+            await send_message_with_retry(
+                context.bot,
+                chat_id,
+                text="Чат уже активен. Продолжайте диалог!",
+                log_context={"handler": "start_existing_user", "chat_id": chat_id},
+            )
+            if mgr:
+                mgr.register_external_send(chat_id, schedule_followup=False, prevent_reschedule=True)
+
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
         chat_id = update.effective_chat.id
@@ -1121,11 +1172,11 @@ class TelegramBot:
         except Exception as e:
             logger.warning(f"Failed to start typing indicator: {e}")
 
-        # Log user message
-        await self.audit.log_user_message(update)
-
         # Ensure the user has a placeholder memory row as soon as they message
         await self.db_manager.ensure_user_memory_exists(user_id)
+
+        # Log user message
+        await self.audit.log_user_message(update)
 
         control = await self.db_manager.get_user_control(user_id)
         is_paused = bool(control.get('is_paused')) if control else False
@@ -1910,6 +1961,7 @@ class TelegramBot:
 
     async def setup_bot_commands(self, app):
         await app.bot.set_my_commands([
+            BotCommand("start", "Начать чат с Nyx"),
             BotCommand("reset", "Reset the conversation context with Nyx"),
             BotCommand("tsundere", "Switch to tsundere persona (Nyx)"),
             BotCommand("friendly", "Switch to friendly persona"),
@@ -1931,6 +1983,7 @@ def main():
     app = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
 
     # --- Handler order matters: handle_menu_button must come BEFORE handle_message ---
+    app.add_handler(CommandHandler("start", bot.start_command))
     app.add_handler(CommandHandler("menu", bot.menu_command))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r'^Меню$'), bot.handle_menu_button))
     app.add_handler(MessageHandler(filters.TEXT & filters.Regex(r'^Начать новый чат$'), bot.handle_new_chat_button))

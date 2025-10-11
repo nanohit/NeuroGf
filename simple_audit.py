@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 from telegram import (
     Bot,
@@ -34,6 +34,7 @@ class NyxAudit:
         self._bot: Optional[Bot] = None
         self._app: Optional[Application] = None
         self.takeover_sessions: Dict[int, int] = {}
+        self.last_audit_user: Optional[Tuple[int, bool]] = None  # (user_id, is_from_bot)
 
     async def _get_bot(self) -> Bot:
         if self._bot is None:
@@ -47,6 +48,7 @@ class NyxAudit:
         self._app.add_handler(CommandHandler("panel", self.admin_panel))
         self._app.add_handler(CommandHandler("chats", self.list_chats))
         self._app.add_handler(CommandHandler("release", self.release_command))
+        self._app.add_handler(CommandHandler("takeover", self.takeover_command))
         self._app.add_handler(CallbackQueryHandler(self.handle_callback))
         self._app.add_handler(
             MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_admin_message)
@@ -201,6 +203,27 @@ class NyxAudit:
         self.takeover_sessions.pop(admin_id, None)
         await update.message.reply_text(f"🔓 Управление пользователем {target} возвращено Nyx.")
 
+    async def takeover_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if not self._is_admin(update):
+            return
+        admin_id = update.effective_user.id
+        if self.last_audit_user is None:
+            await update.message.reply_text("Нет недавних чатов для захвата.")
+            return
+        current = self.takeover_sessions.get(admin_id)
+        target = self.last_audit_user[0]
+        if current == target:
+            await update.message.reply_text(f"Вы уже управляете пользователем {current}.")
+            return
+        if current is not None and current != target:
+            await self.db.set_user_takeover(current, None)
+            self.takeover_sessions.pop(admin_id, None)
+        await self.db.set_user_takeover(target, admin_id)
+        self.takeover_sessions[admin_id] = target
+        await update.message.reply_text(
+            f"🎯 Taking over chat with user {target}.\nНапишите сообщение, и оно придёт от имени Nyx."
+        )
+
     async def handle_admin_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         admin_id = update.effective_user.id
         if admin_id not in ADMIN_IDS:
@@ -235,6 +258,7 @@ class NyxAudit:
                 text=message,
                 log_context={"source": "audit_user"},
             )
+            self.last_audit_user = (user_id, False)
         except Exception as exc:
             logger.error(f"Audit failed (user message): {exc}")
 
@@ -250,5 +274,6 @@ class NyxAudit:
                 text=message,
                 log_context={"source": "audit_bot", "user_id": user_id},
             )
+            self.last_audit_user = (user_id, True)
         except Exception as exc:
             logger.error(f"Audit failed (bot response): {exc}")
