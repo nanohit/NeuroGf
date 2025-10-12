@@ -269,7 +269,7 @@ class AwakeMessageManager:
         ]
         text = None
         if self.llm_generate_idle:
-            prompt = "The user hasn’t replied for a long time. Write an engaging message to restart the conversation. DO NOT be negative, insulting, or teasing. DO NOT explicitly reference past events. DO NOT assume what the user is doing, reading, feeling, or thinking — avoid direct or implied guesses like “Busy?”, “Thinking about…?”, etc. You can ask a thought-provoking question (e.g., “Что думаешь о Карле Марксе?”, “С чем тебе эффективнее учиться — с книгами или с чат-ботами?”, “Если бы ты был планетой, то какой, кроме Земли?”), share a short personal thought or neutral observation, or talk about an interesting idea or topic, or ask something neutral. Avoid any phrasing that implies knowledge of the user’s current state or actions. Keep it natural, balanced (50/50 questions and statements), and relevant. Match previous conversation language."
+            prompt = "The user hasn’t replied for a long time. Write an engaging message to restart the conversation. DO NOT be negative, insulting, or teasing. DO NOT explicitly reference past events. DO NOT assume what the user is doing, reading, feeling, or thinking — avoid direct or implied guesses like “Busy?”, “Thinking about…?”, etc. You can ask a thought-provoking question (e.g., “Что думаешь о Карле Марксе?”, 'Какую музыку любишь?', “С чем тебе эффективнее учиться — с книгами или с чат-ботами?”, “Если бы ты был планетой, то какой, кроме Земли?”), share a short personal thought or neutral observation, or talk about an interesting idea or topic, or ask something neutral yet thought-provoking. Avoid any phrasing that implies knowledge of the user’s current state or actions. Keep it natural, balanced, and relevant. Match previous conversation language."
             try:
                 text = await self.llm_generate_idle(chat_id, prompt)
             except Exception as e:
@@ -562,12 +562,12 @@ class AwakeMessageManager:
                 self.logger.info(f"Gambler: random value {rand_val}, threshold {prob}")
                 if rand_val < prob:
                     text = random.choice([
-                        "Почему не отвечаешь?",
-                        "Эй, ты где пропала?",
-                        "Алло? Пропала?",
-                        "Ты там?",
-                        "Ну что молчишь?",
-                        "Куда пропал?",
+                        "занят?",
+                        "что то ты долго не отвечаешь...",
+                        "куда то ты явно пропал...",
+                        "Всё норм? что то долго не отвчаешь",
+                        "что молчишь? всё нормально?",
+                        "Ты тут?",
                     ])
                     self.logger.info(f"Gambler: sending '{text}'")
                     await self._try_send_text(context, chat_id, text, require_15min_guard=True)
