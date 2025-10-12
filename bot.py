@@ -73,9 +73,16 @@ else:
 
 # Load environment variables
 load_dotenv()
-GEMINI_API_KEY = os.getenv('GEMINI_API_KEY') or 'AIzaSyDC7t3alENMaRn0Cbo8UCIRzks6UaCS-lQ'
-TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN') or '7992114626:AAF6KXi8OgdmHg7WK983S2x8OSq0Jk15aNw'
-DATABASE_URL = os.getenv('DATABASE_URL') or 'postgresql://neondb_owner:npg_jknV5xhGL0eR@ep-rapid-violet-agn8ppi2-pooler.c-2.eu-central-1.aws.neon.tech/neondb?sslmode=require'
+
+def _require_env(name: str) -> str:
+    value = os.getenv(name)
+    if not value:
+        raise RuntimeError(f"Missing required environment variable: {name}")
+    return value
+
+GEMINI_API_KEY = _require_env('GEMINI_API_KEY')
+TELEGRAM_BOT_TOKEN = _require_env('TELEGRAM_BOT_TOKEN')
+DATABASE_URL = _require_env('DATABASE_URL')
 
 # Constants
 TORO_STICKER_SET = "ToroInoue"
@@ -447,6 +454,7 @@ CUT ANYTHING THAT doesn't add new information or personality to your response!!!
 You are a female. In Russian, always use feminine verb and adjective endings when speaking about yourself in the first person. Never use masculine forms. Maintain your female persona consistently in both style and grammar, even if the content is casual or reflective.
 
 **AVOID ECHOING USER'S INPUT**:
+СТАРАЙСЯ НЕ повторять слова собеседника!!! Сразу отвечай или реагируй, без повторения слов собеседника. 
 Do NOT Repeat user's input in your responses! Do NOT Repeat user's input in your responses especially in QUESTION format! Jump straight to the anwser/opinion/reaction/follow up question.
 The user already KNOWS what they said. Never parrot it back.
 never echo back what they just said at the start of your response.
@@ -1077,11 +1085,16 @@ class TelegramBot:
 
         # Audit system - Change AUDIT_CHAT_ID to your actual chat ID (get from @userinfobot)
         AUDIT_CHAT_ID = 811818035  # TODO: Update this to the chat ID where you want to receive audit logs
-        self.audit = NyxAudit(
-            audit_bot_token='8470213883:AAHg43PaaR7GdcjSJ2qS7BMZpgX5amfDzf8',
-            audit_chat_id=AUDIT_CHAT_ID,
-            database_manager=self.db_manager
-        )
+        audit_bot_token = os.getenv('AUDIT_BOT_TOKEN')
+        if not audit_bot_token:
+            logger.warning("AUDIT_BOT_TOKEN is not set; audit logs will be disabled")
+            self.audit = None
+        else:
+            self.audit = NyxAudit(
+                audit_bot_token=audit_bot_token,
+                audit_chat_id=AUDIT_CHAT_ID,
+                database_manager=self.db_manager
+            )
 
     # ------------- Manager wiring -------------
 
@@ -1095,7 +1108,8 @@ class TelegramBot:
                 # map chat to user; here they match, but keep it explicit
                 self.chat_manager.log_automation_message(user_id, text)
                 # Add audit logging
-                asyncio.create_task(self.audit.log_bot_response(user_id, f"[AUTO] {text}"))
+                if self.audit:
+                    asyncio.create_task(self.audit.log_bot_response(user_id, f"[AUTO] {text}"))
 
             async def llm_generate_idle(user_id_inner, prompt):
                 # Use chat_manager to generate an LLM reply for idle
@@ -1122,7 +1136,8 @@ class TelegramBot:
         user_id = update.effective_user.id
         chat_id = update.effective_chat.id
 
-        await self.audit.log_user_message(update)
+        if self.audit:
+            await self.audit.log_user_message(update)
 
         user_existed_previously = await self.db_manager.user_exists(user_id)
         await self.db_manager.ensure_user_memory_exists(user_id)
@@ -1145,10 +1160,11 @@ class TelegramBot:
                 text=onboarding_text,
                 log_context={"handler": "start_onboarding", "chat_id": chat_id},
             )
-            await self.audit.log_bot_response(user_id, onboarding_text)
             if mgr:
                 self.chat_manager.log_automation_message(user_id, onboarding_text)
                 mgr.register_external_send(chat_id, schedule_followup=False, prevent_reschedule=True)
+            if self.audit:
+                await self.audit.log_bot_response(user_id, onboarding_text)
         else:
             await send_message_with_retry(
                 context.bot,
@@ -1176,7 +1192,8 @@ class TelegramBot:
         await self.db_manager.ensure_user_memory_exists(user_id)
 
         # Log user message
-        await self.audit.log_user_message(update)
+        if self.audit:
+            await self.audit.log_user_message(update)
 
         control = await self.db_manager.get_user_control(user_id)
         is_paused = bool(control.get('is_paused')) if control else False
@@ -1250,7 +1267,8 @@ class TelegramBot:
             if reply:
                 await update.message.reply_text(reply)
                 # Log bot response
-                await self.audit.log_bot_response(user_id, reply)
+                if self.audit:
+                    await self.audit.log_bot_response(user_id, reply)
                 mgr.register_external_send(chat_id, schedule_followup=True, prevent_reschedule=mgr.prevent_reschedule_current_turn)
                 # If 'rghtway' was in user message, trigger all awake messages instantly (before sticker logic)
                 if 'rghtway' in user_message.lower():
@@ -1293,7 +1311,8 @@ class TelegramBot:
             logger.warning(f"Failed to start typing indicator: {e}")
 
         # Log user message
-        await self.audit.log_user_message(update)
+        if self.audit:
+            await self.audit.log_user_message(update)
 
         # Ensure the user has a placeholder memory row even if they start with media
         await self.db_manager.ensure_user_memory_exists(user_id)
@@ -1449,7 +1468,8 @@ class TelegramBot:
                         if reply:
                             await update.message.reply_text(reply)
                             # Log bot response
-                            await self.audit.log_bot_response(user_id, reply)
+                            if self.audit:
+                                await self.audit.log_bot_response(user_id, reply)
                             if "rghtway" in (update.message.caption or "").lower():
                                 await mgr.send_all_awake_messages_now(context, chat_id)
                                 # Reset flag after completing the rghtway turn
@@ -1550,7 +1570,8 @@ class TelegramBot:
             logger.warning(f"Failed to start typing indicator: {e}")
 
         # Log user message
-        await self.audit.log_user_message(update)
+        if self.audit:
+            await self.audit.log_user_message(update)
 
         # Ensure the user has a placeholder memory row even for voice-only starts
         await self.db_manager.ensure_user_memory_exists(user_id)
@@ -1621,7 +1642,8 @@ class TelegramBot:
                         if reply:
                             await update.message.reply_text(reply)
                             # Log bot response
-                            await self.audit.log_bot_response(user_id, reply)
+                            if self.audit:
+                                await self.audit.log_bot_response(user_id, reply)
                             if "rghtway" in (update.message.caption or "").lower():
                                 await mgr.send_all_awake_messages_now(context, chat_id)
                                 # Reset flag after completing the rghtway turn
@@ -1948,7 +1970,8 @@ class TelegramBot:
                         text=text,
                         log_context={"source": "admin_outbox", "message_id": message_id},
                     )
-                    await self.audit.log_bot_response(user_id, text)
+                    if self.audit:
+                        await self.audit.log_bot_response(user_id, text)
                     self.chat_manager.log_automation_message(user_id, text)
                     mgr = self.awake.get(user_id)
                     if mgr:

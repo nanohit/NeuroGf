@@ -24,8 +24,17 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(mess
 
 # Load environment variables
 load_dotenv()
-GEMINI_API_KEY = os.getenv('GEMINI_API_KEY') or 'AIzaSyDC7t3alENMaRn0Cbo8UCIRzks6UaCS-lQ'
-TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN') or '7992114626:AAF6KXi8OgdmHg7WK983S2x8OSq0Jk15aNw'
+
+
+def _require_env(name: str) -> str:
+    value = os.getenv(name)
+    if not value:
+        raise RuntimeError(f"Missing required environment variable: {name}")
+    return value
+
+
+GEMINI_API_KEY = _require_env('GEMINI_API_KEY')
+TELEGRAM_BOT_TOKEN = _require_env('TELEGRAM_BOT_TOKEN')
 
 # Set up Gemini client
 client = genai.Client(api_key=GEMINI_API_KEY)
@@ -537,7 +546,7 @@ async def context_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     enabled = user_context_enabled.get(user_id, True)
     user_context_enabled[user_id] = not enabled
     state = "включён" if not enabled else "выключен"
-    await update.message.reply_text(f"Контекстный режим теперь {state}. Структурированная память {'активна' if not enabled else 'отключена'}.")
+    await update.message.reply_text(f"Контекстный режим {state}. Структурированная память {'активна' if not enabled else 'отключена'}.")
 
 # LLM filter+extract logic
 filter_prompt_template = '''
