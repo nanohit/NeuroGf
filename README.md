@@ -1,4 +1,4 @@
-# Nyx Telegram Gemini Bot
+## Nyx
 
 Telegram persona chatbot powered by Gemini 2.5 with emotional tone analysis, agentic awake message management system, memory extraction, voice message recognition, agentic context-based sticker sending, and complex context management. 271 DAU peak.
 
